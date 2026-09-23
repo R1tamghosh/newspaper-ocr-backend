@@ -1,0 +1,8 @@
+.env
+OCRvenv/
+ocr-venv/
+__pycache__/
+*.pyc
+.venv/
+*.log
+API-tokens.txt

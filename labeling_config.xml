@@ -1,0 +1,15 @@
+<View>
+  <Image name="page" value="$image" zoom="true" zoomControl="true" rotateControl="true"/>
+
+  <RectangleLabels name="bbox" toName="page">
+    <Label value="TextBlock" background="#4A90D9"/>
+  </RectangleLabels>
+
+  <TextArea name="transcription" toName="page"
+            editable="true"
+            perRegion="true"
+            required="false"
+            rows="3"
+            maxSubmissions="1"
+            placeholder="OCR result will appear here after you draw a box"/>
+</View>
