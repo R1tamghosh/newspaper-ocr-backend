@@ -14,6 +14,7 @@ import base64
 import io
 import logging
 import os
+import tempfile
 
 import requests
 from flask import Flask, jsonify, request
@@ -36,6 +37,12 @@ app = Flask(__name__)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
+SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY")
+SARVAM_LANGUAGE = os.environ.get("SARVAM_LANGUAGE", "bn-IN")
+
+# "gemini" or "sarvam" - which model actually does the transcribing
+OCR_PROVIDER = os.environ.get("OCR_PROVIDER", "gemini").lower()
+
 # If Label Studio and this backend both run locally, LS serves task images
 # from its own file server and usually needs this auth header to fetch them.
 LABEL_STUDIO_URL = os.environ.get("LABEL_STUDIO_URL", "http://localhost:8080")
@@ -48,6 +55,11 @@ PROMPT = (
 )
 
 _client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+_sarvam_client = None
+if SARVAM_API_KEY:
+    from sarvamai import SarvamAI
+    _sarvam_client = SarvamAI(api_subscription_key=SARVAM_API_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +179,7 @@ def ocr_missing_regions(image_ref: str, result: list) -> tuple[list, bool]:
         if img is None:
             img = load_task_image(image_ref)
         crop = crop_from_percent_box(img, rect["value"])
-        text = ocr_with_gemini(crop)
+        text = ocr_transcribe(crop)
         changed = True
 
         new_textarea = {
@@ -186,6 +198,52 @@ def ocr_missing_regions(image_ref: str, result: list) -> tuple[list, bool]:
             updated.append(new_textarea)
 
     return updated, changed
+
+
+def ocr_with_sarvam(crop_img: Image.Image) -> str:
+    if _sarvam_client is None:
+        return "[SARVAM_API_KEY not set on the ML backend]"
+
+    buf = io.BytesIO()
+    crop_img.save(buf, format="PNG")
+    buf.seek(0)
+
+    # Step 1: start the job. Note "digitise" (Sarvam's spelling), and the
+    # file goes in as a list — a (filename, filelike) tuple works.
+    start = _sarvam_client.doc_ai.digitise(
+        file=[("crop.png", buf)],
+        language=SARVAM_LANGUAGE,
+        output_format="md",
+    )
+    job_id = start.job_id
+
+    # Step 2: poll until the job finishes. digitise() only *starts* the
+    # job - it does not return text.
+    for _ in range(30):  # ~30s max wait, adjust if needed
+        status = _sarvam_client.doc_ai.get_status(job_id)
+        if status.status in ("completed", "partially_completed"):
+            break
+        if status.status in ("failed", "rejected"):
+            return f"[Sarvam job {status.status}]"
+        time.sleep(1)
+    else:
+        return "[Sarvam job timed out]"
+
+    # Step 3: fetch the actual text once the job is done.
+    results = _sarvam_client.doc_ai.get_results(job_id)
+    pieces = []
+    for page in getattr(results, "pages", []) or []:
+        text = getattr(page, "md", None) or getattr(page, "text", None)
+        if text:
+            pieces.append(text)
+    return "\n".join(pieces).strip()
+
+def ocr_transcribe(crop_img: Image.Image) -> str:
+    """Single entry point the rest of the app calls - dispatches to
+    whichever provider OCR_PROVIDER is set to."""
+    if OCR_PROVIDER == "sarvam":
+        return ocr_with_sarvam(crop_img)
+    return ocr_with_gemini(crop_img)
 
 
 def ocr_with_gemini(crop_img: Image.Image) -> str:
@@ -253,7 +311,7 @@ def predict():
     try:
         img = load_task_image(image_ref)
         crop = crop_from_percent_box(img, region_value)
-        text = ocr_with_gemini(crop)
+        text = ocr_transcribe(crop)
     except Exception as exc:  # noqa: BLE001
         log.exception("OCR failed")
         text = f"[OCR error: {exc}]"
