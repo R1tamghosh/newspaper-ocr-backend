@@ -15,8 +15,9 @@ import io
 import logging
 import os
 import tempfile
-
+import time
 import requests
+import threading
 from flask import Flask, jsonify, request
 from PIL import Image
 from google import genai
@@ -180,6 +181,9 @@ def ocr_missing_regions(image_ref: str, result: list) -> tuple[list, bool]:
             img = load_task_image(image_ref)
         crop = crop_from_percent_box(img, rect["value"])
         text = ocr_transcribe(crop)
+        if not text.strip() or text.startswith("[Sarvam job") or text.startswith("[OCR error"):
+            log.warning("Empty/failed OCR result for region %s, leaving untouched", region_id)
+            continue  # don't write empty text - avoids retry-loop on next webhook
         changed = True
 
         new_textarea = {
@@ -231,11 +235,15 @@ def ocr_with_sarvam(crop_img: Image.Image) -> str:
 
     # Step 3: fetch the actual text once the job is done.
     results = _sarvam_client.doc_ai.get_results(job_id)
+
     pieces = []
-    for page in getattr(results, "pages", []) or []:
-        text = getattr(page, "md", None) or getattr(page, "text", None)
-        if text:
-            pieces.append(text)
+    for document in results.documents or []:
+        for page in document.pages or []:
+            blocks = sorted(page.blocks or [], key=lambda b: b.get("reading_order", 0))
+            for block in blocks:
+                text = block.get("text")
+                if text:
+                    pieces.append(text)
     return "\n".join(pieces).strip()
 
 def ocr_transcribe(crop_img: Image.Image) -> str:
@@ -335,27 +343,34 @@ def predict():
     log.info("=== /predict response ===\n%s", response_body)
     return jsonify(response_body)
 
-
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json or {}
     action = data.get("action")
     log.info("=== /webhook action=%s payload keys=%s ===", action, list(data.keys()))
-    log.info("=== /webhook raw payload ===\n%s", data)
 
     if action not in ("ANNOTATION_CREATED", "ANNOTATION_UPDATED"):
         return jsonify({"status": "ignored", "action": action}), 200
 
+    # Hand off the slow part (OCR + PATCH) to a background thread so we can
+    # reply to Label Studio immediately. Sarvam's job-based OCR can take
+    # 10-30+ seconds, far longer than Label Studio waits for a response.
+    threading.Thread(target=process_annotation_webhook, args=(data,), daemon=True).start()
+    return jsonify({"status": "accepted"}), 200
+
+
+def process_annotation_webhook(data):
+    """Everything your old /webhook body did, now running off the request
+    thread. Takes the already-parsed JSON dict, not the Flask request
+    object (that's not usable outside the request context)."""
     annotation = data.get("annotation")
     task = data.get("task")
 
-    # The auto-created ML-backend webhook doesn't always include full data -
-    # fall back to fetching it from the API if it's missing.
     if not annotation or "result" not in annotation:
         annotation_id = (annotation or {}).get("id") or data.get("annotation_id")
         if not annotation_id:
             log.error("No annotation id in webhook payload, can't proceed")
-            return jsonify({"status": "no annotation id"}), 200
+            return
         log.info("Fetching full annotation %s from API", annotation_id)
         annotation = fetch_annotation(annotation_id)
 
@@ -367,7 +382,7 @@ def webhook():
 
     if not task or "data" not in task:
         log.error("Could not resolve task data, giving up")
-        return jsonify({"status": "no task data"}), 200
+        return
 
     image_ref = task["data"].get("image") or task["data"].get("img")
     result = annotation.get("result") or []
@@ -376,17 +391,15 @@ def webhook():
         updated_result, changed = ocr_missing_regions(image_ref, result)
     except Exception:
         log.exception("OCR failed while processing webhook")
-        return jsonify({"status": "ocr error"}), 200
+        return
 
     if not changed:
         log.info("Nothing to OCR (all regions already transcribed)")
-        return jsonify({"status": "no changes"}), 200
+        return
 
     patch_result = patch_annotation(annotation["id"], updated_result)
     log.info("=== patched annotation %s ===", annotation["id"])
-    return jsonify({"status": "ok", "annotation": patch_result.get("id")}), 200
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 9090))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=True, threaded=True)
