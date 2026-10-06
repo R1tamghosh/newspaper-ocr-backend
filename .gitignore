@@ -7,3 +7,6 @@ __pycache__/
 *.log
 API-tokens.txt
 *:Zone.Identifier
+user_keys.json
+user_keys.json.lock
+.user_keys_*
