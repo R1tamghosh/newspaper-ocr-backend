@@ -48,7 +48,7 @@ Open `http://localhost:8080`, create an account, then copy your token from **ava
 ### 2. Install the backend
 
 ```bash
-git clone <REPO_URL> newspaper-ocr-backend
+git clone <https://github.com/R1tamghosh/newspaper-ocr-backend> newspaper-ocr-backend
 cd newspaper-ocr-backend
 python3 -m venv backend-env
 source backend-env/bin/activate
