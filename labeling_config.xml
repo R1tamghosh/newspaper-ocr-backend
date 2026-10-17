@@ -2,7 +2,11 @@
   <Image name="page" value="$image" zoom="true" zoomControl="true" rotateControl="true"/>
 
   <RectangleLabels name="bbox" toName="page">
-    <Label value="TextBlock" background="#4A90D9"/>
+    <Label value="Headline" background="#D32F2F"/>
+    <Label value="Subtitle" background="#F57C00"/>
+    <Label value="BodyText" background="#4A90D9"/>
+    <Label value="Caption" background="#388E3C"/>
+    <Label value="Image" background="#7B1FA2"/>
   </RectangleLabels>
 
   <TextArea name="transcription" toName="page"
