@@ -10,7 +10,7 @@ Annotator --> backend /settings   (one-time key registration)
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.13
 - Label Studio 1.23.0
 - A Gemini or Sarvam API key for each annotator
 - Multi-user hosting: Windows 11 22H2+ with WSL2 (Ubuntu), or a Linux/macOS host
