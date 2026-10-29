@@ -43,7 +43,7 @@ pip install label-studio==1.23.0
 label-studio start
 ```
 
-Open `http://localhost:8080`, create an account, then copy your token from **avatar (top right) > Account & Settings** (Legacy Token or Personal Access Token). Stop Label Studio with `Ctrl+C` and deactivate the environment.
+Open `http://localhost:8080`, create an account, then copy your token from **avatar (top right) > Account & Settings** (Legacy Token or Personal Access Token). Stop Label Studio with `Ctrl+C` inside the terminal and deactivate the environment by typing deactivate in the terminal.
 
 ### 2. Install the backend
 
